@@ -283,47 +283,13 @@ public abstract class AbstractCompactionStrategy
      */
     protected boolean worthDroppingTombstones(SSTableReader sstable, int gcBefore)
     {
-        // since we use estimations to calculate, there is a chance that compaction will not drop tombstones actually.
+        // there is a chance that compaction will not drop tombstones actually.
         // if that happens we will end up in infinite compaction loop, so first we check enough if enough time has
         // elapsed since SSTable created.
         if (System.currentTimeMillis() < sstable.getCreationTimeFor(Component.DATA) + tombstoneCompactionInterval * 1000)
            return false;
 
-        double droppableRatio = sstable.getEstimatedDroppableTombstoneRatio(gcBefore);
-        if (droppableRatio <= tombstoneThreshold)
-            return false;
-
-        Set<SSTableReader> overlaps = cfs.getOverlappingSSTables(Collections.singleton(sstable));
-        if (overlaps.isEmpty())
-        {
-            // there is no overlap, tombstones are safely droppable
-            return true;
-        }
-        else if (CompactionController.getFullyExpiredSSTables(cfs, Collections.singleton(sstable), overlaps, gcBefore).size() > 0)
-        {
-            return true;
-        }
-        else
-        {
-            // what percentage of columns do we expect to compact outside of overlap?
-            if (sstable.getKeySampleSize() < 2)
-            {
-                // we have too few samples to estimate correct percentage
-                return false;
-            }
-            // first, calculate estimated keys that do not overlap
-            long keys = sstable.estimatedKeys();
-            Set<Range<Token>> ranges = new HashSet<Range<Token>>(overlaps.size());
-            for (SSTableReader overlap : overlaps)
-                ranges.add(new Range<Token>(overlap.first.token, overlap.last.token, overlap.partitioner));
-            long remainingKeys = keys - sstable.estimatedKeysForRanges(ranges);
-            // next, calculate what percentage of columns we have within those keys
-            long columns = sstable.getEstimatedColumnCount().mean() * remainingKeys;
-            double remainingColumnsRatio = ((double) columns) / (sstable.getEstimatedColumnCount().count() * sstable.getEstimatedColumnCount().mean());
-
-            // return if we still expect to have droppable tombstones in rest of columns
-            return remainingColumnsRatio * droppableRatio > tombstoneThreshold;
-        }
+        return sstable.getEstimatedDroppableTombstoneRatio(gcBefore) > tombstoneThreshold;
     }
 
     public static Map<String, String> validateOptions(Map<String, String> options) throws ConfigurationException
