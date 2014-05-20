@@ -19,6 +19,8 @@ package org.apache.cassandra.db.compaction;
 
 import java.util.*;
 
+import com.google.common.base.Predicate;
+import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -171,7 +173,7 @@ public abstract class AbstractCompactionStrategy
      * @param gcBefore time to drop tombstones
      * @return true if given sstable's tombstones are expected to be removed
      */
-    protected boolean worthDroppingTombstones(SSTableReader sstable, int gcBefore)
+    protected boolean worthDroppingTombstones(final SSTableReader sstable, int gcBefore)
     {
         // since we use estimations to calculate, there is a chance that compaction will not drop tombstones actually.
         // if that happens we will end up in infinite compaction loop, so first we check enough if enough time has
@@ -183,7 +185,16 @@ public abstract class AbstractCompactionStrategy
         if (droppableRatio <= tombstoneThreshold)
             return false;
 
+        //for the estimation, we only consider overlapping sstables that may contain older data
         Set<SSTableReader> overlaps = cfs.getOverlappingSSTables(Collections.singleton(sstable));
+        int initialSize = overlaps.size();
+        overlaps = Sets.filter(overlaps, new Predicate<SSTableReader>() {
+            @Override
+            public boolean apply(SSTableReader overlap) {
+                return overlap.getMinTimestamp() <= sstable.getMaxTimestamp();
+            }
+        });
+
         if (overlaps.isEmpty())
         {
             // there is no overlap, tombstones are safely droppable
