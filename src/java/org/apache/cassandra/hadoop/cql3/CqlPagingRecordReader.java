@@ -382,7 +382,11 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
             String rowKey = "";
             if (keyColumns.size() == 1)
             {
-                rowKey = partitionBoundColumns.get(0).validator.getString(keyColumns.get(partitionBoundColumns.get(0).name));
+                BoundColumn boundColumn = partitionBoundColumns.get(0);
+                AbstractType<?> validator = boundColumn.validator;
+                String partitionColname = partitionBoundColumns.get(0).name;
+                ByteBuffer value = keyColumns.get(partitionColname);
+                rowKey = validator.getString(value);
             }
             else
             {
@@ -750,9 +754,11 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
             {
                 CFMetaData cfMeta = CFMetaData.fromThrift(cfDef);
                 CFDefinition cfDefinition = new CFDefinition(cfMeta);
-                Iterator<Name> keyItera = cfDefinition.iterator();
-                while(keyItera.hasNext())
-                    partitionBoundColumns.add(new BoundColumn(keyItera.next().name.toString()));
+                for (Name columnIdentifier : cfDefinition.partitionKeys()) {
+                    BoundColumn boundColumn = new BoundColumn(columnIdentifier.name.toString());
+                    boundColumn.validator = parseType(cfDef.key_validation_class);
+                    partitionBoundColumns.add(boundColumn);
+                }
                 parseKeyValidators(cfDef.key_validation_class);
                 return;
             }
