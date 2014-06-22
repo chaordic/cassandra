@@ -17,13 +17,8 @@
  */
 package org.apache.cassandra.locator;
 
-import java.io.DataInputStream;
-import java.io.FilterInputStream;
 import java.io.IOException;
-import java.net.HttpURLConnection;
 import java.net.InetAddress;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 import org.slf4j.Logger;
@@ -33,7 +28,7 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.EndpointState;
 import org.apache.cassandra.gms.Gossiper;
-import org.apache.cassandra.io.util.FileUtils;
+import org.apache.cassandra.utils.Ec2Util;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -67,29 +62,10 @@ public class Ec2Snitch extends AbstractNetworkTopologySnitch
         logger.info("EC2Snitch using region: " + ec2region + ", zone: " + ec2zone + ".");
     }
 
+
     String awsApiCall(String url) throws IOException, ConfigurationException
     {
-        // Populate the region and zone by introspection, fail if 404 on metadata
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-        DataInputStream d = null;
-        try
-        {
-            conn.setRequestMethod("GET");
-            if (conn.getResponseCode() != 200)
-                throw new ConfigurationException("Ec2Snitch was unable to execute the API call. Not an ec2 node?");
-
-            // Read the information. I wish I could say (String) conn.getContent() here...
-            int cl = conn.getContentLength();
-            byte[] b = new byte[cl];
-            d = new DataInputStream((FilterInputStream) conn.getContent());
-            d.readFully(b);
-            return new String(b, StandardCharsets.UTF_8);
-        }
-        finally
-        {
-            FileUtils.close(d);
-            conn.disconnect();
-        }
+        return Ec2Util.awsApiCall(url);
     }
 
     public String getRack(InetAddress endpoint)
