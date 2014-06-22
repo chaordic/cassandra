@@ -27,6 +27,11 @@ import org.apache.cassandra.hadoop.HadoopCompat;
 import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.cql3.CFDefinition;
+import org.apache.cassandra.cql3.CFDefinition.Name;
+import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.LongType;
@@ -126,7 +131,7 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
             throw new RuntimeException(e);
         }
     }
-    
+
     @Override
     public void close() throws IOException
     {
@@ -147,7 +152,7 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
         if (clientException != null)
             throw clientException;
     }
-    
+
     /**
      * If the key is to be associated with a valid value, a mutation is created
      * for it with the given column family and columns. In the event the value
@@ -207,7 +212,7 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
         {
             super(endpoints);
          }
-        
+
         /**
          * Loops collecting cql binded variable values from the queue and sending to Cassandra
          */
@@ -239,13 +244,13 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
                         {
                             client.execute_prepared_cql3_query(itemId, bindVariables, ConsistencyLevel.ONE);
                             i++;
-                            
+
                             if (i >= batchThreshold)
                                 break;
-                            
+
                             bindVariables = queue.poll();
                         }
-                        
+
                         break;
                     }
                     catch (Exception e)
@@ -342,12 +347,18 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
         Column rawKeyValidator = result.rows.get(0).columns.get(0);
         String validator = ByteBufferUtil.string(ByteBuffer.wrap(rawKeyValidator.getValue()));
         keyValidator = parseType(validator);
-        
+
         Column rawPartitionKeys = result.rows.get(0).columns.get(1);
         String keyString = ByteBufferUtil.string(ByteBuffer.wrap(rawPartitionKeys.getValue()));
         logger.debug("partition keys: " + keyString);
 
         List<String> keys = FBUtilities.fromJsonList(keyString);
+        if (keys.size() == 0)
+        {
+            retrieveKeysForThriftTables(client);
+            return;
+        }
+
         partitionKeyColumns = new String[keys.size()];
         int i = 0;
         for (String key : keys)
@@ -361,6 +372,36 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
 
         logger.debug("cluster columns: " + clusterColumnString);
         clusterColumns = FBUtilities.fromJsonList(clusterColumnString);
+    }
+
+    /**
+     * retrieve the fake partition keys and cluster keys for classic thrift table
+     * use CFDefinition to get keys and columns
+     * */
+    private void retrieveKeysForThriftTables(Cassandra.Client client) throws Exception
+    {
+        String keyspace = ConfigHelper.getOutputKeyspace(conf);
+        String cfName = ConfigHelper.getOutputColumnFamily(conf);
+        KsDef ksDef = client.describe_keyspace(keyspace);
+        for (CfDef cfDef : ksDef.cf_defs)
+        {
+            if (cfDef.name.equalsIgnoreCase(cfName))
+            {
+                CFMetaData cfMeta = CFMetaData.fromThrift(cfDef);
+                CFDefinition cfDefinition = new CFDefinition(cfMeta);
+                int i = 0;
+                partitionKeyColumns = new String[cfDefinition.partitionKeyCount()];
+                for (Name column : cfDefinition.partitionKeys())
+                {
+                    partitionKeyColumns[i] = column.name.toString();
+                    i++;
+                }
+                clusterColumns = new ArrayList<String>();
+                for (Name column : cfDefinition.clusteringColumns())
+                    clusterColumns.add(column.name.toString());
+                return;
+            }
+        }
     }
 
     private AbstractType<?> parseType(String type) throws ConfigurationException

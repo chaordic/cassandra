@@ -31,6 +31,9 @@ import com.google.common.collect.Iterables;
 import org.apache.cassandra.hadoop.HadoopCompat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.cql3.CFDefinition;
+import org.apache.cassandra.cql3.CFDefinition.Name;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.LongType;
@@ -118,11 +121,11 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
         userDefinedWhereClauses = CqlConfigHelper.getInputWhereClauses(conf);
 
         Optional<Integer> pageRowSizeOptional = CqlConfigHelper.getInputPageRowSize(conf);
-        try 
+        try
         {
         	pageRowSize = pageRowSizeOptional.isPresent() ? pageRowSizeOptional.get() : DEFAULT_CQL_PAGE_LIMIT;
-        } 
-        catch(NumberFormatException e) 
+        }
+        catch(NumberFormatException e)
         {
         	pageRowSize = DEFAULT_CQL_PAGE_LIMIT;
         }
@@ -261,7 +264,7 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
         {
             value.clear();
             value.putAll(getCurrentValue());
-            
+
             keys.clear();
             keys.putAll(getCurrentKey());
 
@@ -379,7 +382,11 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
             String rowKey = "";
             if (keyColumns.size() == 1)
             {
-                rowKey = partitionBoundColumns.get(0).validator.getString(keyColumns.get(partitionBoundColumns.get(0).name));
+                BoundColumn boundColumn = partitionBoundColumns.get(0);
+                AbstractType<?> validator = boundColumn.validator;
+                String partitionColname = partitionBoundColumns.get(0).name;
+                ByteBuffer value = keyColumns.get(partitionColname);
+                rowKey = validator.getString(value);
             }
             else
             {
@@ -508,7 +515,7 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
         private Pair<Integer, String> whereClause(List<BoundColumn> column, int position)
         {
             if (position == column.size() - 1 || column.get(position + 1).value == null)
-                return Pair.create(position + 2, String.format(" AND %s %s ? ", quote(column.get(position).name), column.get(position).reversed ? " < " : " >")); 
+                return Pair.create(position + 2, String.format(" AND %s %s ? ", quote(column.get(position).name), column.get(position).reversed ? " < " : " >"));
 
             Pair<Integer, String> clause = whereClause(column, position + 1);
             return Pair.create(clause.left, String.format(" AND %s = ? %s", quote(column.get(position).name), clause.right));
@@ -690,6 +697,12 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
         for (String key : keys)
             partitionBoundColumns.add(new BoundColumn(key));
 
+        if (partitionBoundColumns.size() == 0)
+        {
+            retrieveKeysForThriftTables();
+            return;
+        }
+
         keyString = ByteBufferUtil.string(ByteBuffer.wrap(cqlRow.columns.get(1).getValue()));
         logger.debug("cluster columns: {}", keyString);
         keys = FBUtilities.fromJsonList(keyString);
@@ -726,6 +739,37 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
         {
             clusterColumns.get(0).reversed = true;
         }
+    }
+
+    /**
+     * retrieve the fake partition keys and cluster keys for classic thrift table
+     * use CFDefinition to get keys and columns
+     * */
+    private void retrieveKeysForThriftTables() throws Exception
+    {
+        KsDef ksDef = client.describe_keyspace(keyspace);
+        for (CfDef cfDef : ksDef.cf_defs)
+        {
+            if (cfDef.name.equalsIgnoreCase(cfName))
+            {
+                CFMetaData cfMeta = CFMetaData.fromThrift(cfDef);
+                CFDefinition cfDefinition = new CFDefinition(cfMeta);
+                for (Name columnIdentifier : cfDefinition.partitionKeys()) {
+                    BoundColumn boundColumn = new BoundColumn(columnIdentifier.name.toString());
+                    boundColumn.validator = parseType(cfDef.key_validation_class);
+                    partitionBoundColumns.add(boundColumn);
+                }
+                parseKeyValidators(cfDef.key_validation_class);
+                return;
+            }
+        }
+    }
+
+    /** parse key validators */
+    private void parseKeyValidators(String rowKeyValidator) throws IOException
+    {
+        logger.debug("row key validator: {} ", rowKeyValidator);
+        keyValidator = parseType(rowKeyValidator);
     }
 
     /** check whether current row is at the end of range */
@@ -784,7 +828,7 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
             this.name = name;
         }
     }
-    
+
     /** get string from a ByteBuffer, catch the exception and throw it as runtime exception*/
     private static String stringValue(ByteBuffer value)
     {
