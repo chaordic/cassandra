@@ -56,6 +56,7 @@ public class ConfigHelper
     private static final String INPUT_KEYRANGE_CONFIG = "cassandra.input.keyRange";
     private static final String INPUT_SPLIT_SIZE_CONFIG = "cassandra.input.split.size";
     private static final String INPUT_WIDEROWS_CONFIG = "cassandra.input.widerows";
+    private static final String INPUT_EC2_HOSTNAME_RESOLUTION = "cassandra.input.ec2_hostname_resolution";
     private static final int DEFAULT_SPLIT_SIZE = 64 * 1024;
     private static final String RANGE_BATCH_SIZE_CONFIG = "cassandra.range.batch.size";
     private static final int DEFAULT_RANGE_BATCH_SIZE = 4096;
@@ -495,6 +496,27 @@ public class ConfigHelper
     public static int getThriftFramedTransportSize(Configuration conf)
     {
         return conf.getInt(THRIFT_FRAMED_TRANSPORT_SIZE_IN_MB, 15) * 1024 * 1024; // 15MB is default in Cassandra
+    }
+
+    /**
+     * Due to a limitation of Java's InetAddress.getHostName() on EC2,
+     * Hadoop input split locations are always identified by IP addresses,
+     * not EC2 public hostnames. This may bring locality issues if Hadoop nodes
+     * are identified by EC2 public hostnames (ec2-.....compute-1.amazonaws.com).
+     *
+     * If this property is enabled, during input split definition a reverse DNS
+     * query is sent directly to the system's configured DNS provider, bypassing
+     * InetAddress.getHostName() broken functionality on EC2 hosts. (see CASSANDRA-7431)
+     */
+    public static void setEc2HostnameResolution(Configuration conf, Boolean enable)
+    {
+        conf.set(INPUT_EC2_HOSTNAME_RESOLUTION, enable.toString());
+    }
+
+    public static boolean getEc2HostnameResolution(Configuration conf)
+    {
+        String enableEc2Hostnames = conf.get(INPUT_EC2_HOSTNAME_RESOLUTION);
+        return enableEc2Hostnames != null && Boolean.parseBoolean(enableEc2Hostnames);
     }
 
     public static CompressionParameters getOutputCompressionParamaters(Configuration conf)

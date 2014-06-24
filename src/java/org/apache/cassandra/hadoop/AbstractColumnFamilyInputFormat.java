@@ -19,6 +19,7 @@ package org.apache.cassandra.hadoop;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -29,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,6 +44,7 @@ import org.apache.cassandra.thrift.CfSplit;
 import org.apache.cassandra.thrift.InvalidRequestException;
 import org.apache.cassandra.thrift.KeyRange;
 import org.apache.cassandra.thrift.TokenRange;
+import org.apache.cassandra.utils.DnsUtil;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapred.JobConf;
@@ -73,6 +76,7 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
     private String keyspace;
     private String cfName;
     private IPartitioner partitioner;
+    private boolean ec2HostnameResolution;
 
     protected void validateConfiguration(Configuration conf)
     {
@@ -127,8 +131,8 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
         keyspace = ConfigHelper.getInputKeyspace(conf);
         cfName = ConfigHelper.getInputColumnFamily(conf);
         partitioner = ConfigHelper.getInputPartitioner(conf);
+        ec2HostnameResolution = ConfigHelper.getEc2HostnameResolution(conf);
         logger.debug("partitioner is " + partitioner);
-
 
         // cannonical ranges, split into pieces, fetching the splits in parallel
         ExecutorService executor = new ThreadPoolExecutor(0, 128, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
@@ -244,7 +248,7 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
                 String endpoint_address = endpoint;
                 if (endpoint_address == null || endpoint_address.equals("0.0.0.0"))
                     endpoint_address = range.endpoints.get(endpointIndex);
-                endpoints[endpointIndex++] = InetAddress.getByName(endpoint_address).getHostName();
+                endpoints[endpointIndex++] = getHostname(endpoint_address);
             }
 
             Token.TokenFactory factory = partitioner.getTokenFactory();
@@ -268,6 +272,16 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
                 }
             }
             return splits;
+        }
+
+        protected String getHostname(String endpoint_address) throws UnknownHostException
+        {
+            //reverse DNS lookup via InetAddress.getByName().getHostname() does not work on EC2
+            String hostName = InetAddress.getByName(endpoint_address).getHostName();
+            if (ec2HostnameResolution && hostName.equals(endpoint_address)) {
+                return DnsUtil.reverseLookup(endpoint_address);
+            }
+            return hostName;
         }
     }
 
