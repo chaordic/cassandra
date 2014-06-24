@@ -754,10 +754,15 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
             {
                 CFMetaData cfMeta = CFMetaData.fromThrift(cfDef);
                 CFDefinition cfDefinition = new CFDefinition(cfMeta);
-                for (Name columnIdentifier : cfDefinition.partitionKeys()) {
-                    BoundColumn boundColumn = new BoundColumn(columnIdentifier.name.toString());
+                for (Name partitionKeys : cfDefinition.partitionKeys()) {
+                    BoundColumn boundColumn = new BoundColumn(partitionKeys.name.toString());
                     boundColumn.validator = parseType(cfDef.key_validation_class);
                     partitionBoundColumns.add(boundColumn);
+                }
+                for (Name clusteringColumns : cfDefinition.clusteringColumns()) {
+                    BoundColumn boundColumn = new BoundColumn(clusteringColumns.name.toString());
+                    boundColumn.validator = parseType(cfDef.key_validation_class);
+                    clusterColumns.add(boundColumn);
                 }
                 parseKeyValidators(cfDef.key_validation_class);
                 return;
