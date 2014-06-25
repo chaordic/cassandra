@@ -144,7 +144,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
         cfName = ConfigHelper.getInputColumnFamily(conf);
         consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
         keyspace = ConfigHelper.getInputKeyspace(conf);
-        
+
         if (batchSize < 2)
             throw new IllegalArgumentException("Minimum batchSize is 2.  Suggested batchSize is 100 or more");
 
@@ -154,11 +154,24 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
                 return;
 
             // create connection using thrift
-            String location = getLocation();
-
-            int port = ConfigHelper.getInputRpcPort(conf);
-            client = ColumnFamilyInputFormat.createAuthenticatedClient(location, port, conf);
-
+            String[] locations = getLocations();
+            Exception lastException = null;
+            for (String location : locations)
+            {
+                int port = ConfigHelper.getInputRpcPort(conf);
+                try
+                {
+                    client = ColumnFamilyInputFormat.createAuthenticatedClient(location, port, conf);
+                    break;
+                }
+                catch (Exception e)
+                {
+                    lastException = e;
+                    logger.warn("Failed to create authenticated client to {}:{}", location , port);
+                }
+            }
+            if (client == null && lastException != null)
+                throw lastException;
         }
         catch (Exception e)
         {
@@ -183,7 +196,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
 
     // we don't use endpointsnitch since we are trying to support hadoop nodes that are
     // not necessarily on Cassandra machines, too.  This should be adequate for single-DC clusters, at least.
-    private String getLocation()
+    private String[] getLocations()
     {
         Collection<InetAddress> localAddresses = FBUtilities.getAllLocalAddresses();
 
@@ -202,11 +215,11 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
                 }
                 if (address.equals(locationAddress))
                 {
-                    return location;
+                    return new String[]{ location };
                 }
             }
         }
-        return split.getLocations()[0];
+        return split.getLocations();
     }
 
     private abstract class RowIterator extends AbstractIterator<Pair<ByteBuffer, SortedMap<ByteBuffer, IColumn>>>
@@ -221,7 +234,7 @@ public class ColumnFamilyRecordReader extends RecordReader<ByteBuffer, SortedMap
         {
             try
             {
-                partitioner = FBUtilities.newPartitioner(client.describe_partitioner());           
+                partitioner = FBUtilities.newPartitioner(client.describe_partitioner());
                 // get CF meta data
                 String query = "SELECT comparator," +
                                "       subcomparator " +
