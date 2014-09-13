@@ -57,6 +57,7 @@ import static org.junit.Assert.*;
 @RunWith(OrderedJUnit4ClassRunner.class)
 public class CompactionsTest extends SchemaLoader
 {
+    private static final String STANDARD2 = "Standard2";
     private static final String STANDARD1 = "Standard1";
     public static final String KEYSPACE1 = "Keyspace1";
 
@@ -97,6 +98,44 @@ public class CompactionsTest extends SchemaLoader
         return store;
     }
 
+    @Test
+    public void testOverlappingSStableCompaction() throws Exception
+    {
+        Keyspace keyspace = Keyspace.open(KEYSPACE1);
+        ColumnFamilyStore store = keyspace.getColumnFamilyStore(STANDARD2);
+        store.clearUnsafe();
+        //store.metadata.gcGraceSeconds(1);
+        store.setCompactionStrategyClass("org.apache.cassandra.db.compaction.MostOverlappingCompactionStrategy");
+
+        // disable compaction while flushing
+        store.disableAutoCompaction();
+
+        populateSingleColumnRow(KEYSPACE1, STANDARD2, 0, 100, 0); //overlap with next
+        store.forceBlockingFlush();
+        populateSingleColumnRow(KEYSPACE1, STANDARD2, 50, 150, 0); //overlap with previous
+        store.forceBlockingFlush();
+        populateSingleColumnRow(KEYSPACE1, STANDARD2, 400, 500, 0); //do not overlap
+        store.forceBlockingFlush();
+
+        assertEquals(3, store.getSSTables().size());
+
+        // enable compaction, submit background and wait for it to complete
+        store.enableAutoCompaction();
+        FBUtilities.waitOnFutures(CompactionManager.instance.submitBackground(store));
+        while (CompactionManager.instance.getPendingTasks() > 0 || CompactionManager.instance.getActiveCompactions() > 0)
+            TimeUnit.SECONDS.sleep(1);
+
+        // and sstable with ttl should be compacted
+        assertEquals(2, store.getSSTables().size());
+//        long size = store.getSSTables().iterator().next().uncompressedLength();
+//        assertTrue("should be less than " + originalSize + ", but was " + size, size < originalSize);
+
+//        // make sure max timestamp of compacted sstables is recorded properly after compaction.
+//        assertMaxTimestamp(store, timestamp);
+//
+//        return store;
+    }
+
     private long populate(String ks, String cf, int startRowKey, int endRowKey, int ttl) {
         long timestamp = System.currentTimeMillis();
         for (int i = startRowKey; i <= endRowKey; i++)
@@ -108,6 +147,21 @@ public class CompactionsTest extends SchemaLoader
                        ByteBufferUtil.EMPTY_BYTE_BUFFER,
                        timestamp,
                        j > 0 ? ttl : 0); // let first column never expire, since deleting all columns does not produce sstable
+            rm.apply();
+        }
+        return timestamp;
+    }
+
+    private long populateSingleColumnRow(String ks, String cf, int startRowKey, int endRowKey, int ttl) {
+        long timestamp = System.currentTimeMillis();
+        for (int i = startRowKey; i <= endRowKey; i++)
+        {
+            DecoratedKey key = Util.dk(Integer.toString(i));
+            Mutation rm = new Mutation(ks, key.getKey());
+            rm.add(cf,  Util.cellname(Integer.toString(i)),
+                    ByteBufferUtil.EMPTY_BYTE_BUFFER,
+                    timestamp,
+                    0); // let first column never expire, since deleting all columns does not produce sstable
             rm.apply();
         }
         return timestamp;
@@ -252,7 +306,7 @@ public class CompactionsTest extends SchemaLoader
         // This test check that EchoedRow doesn't skipp rows: see CASSANDRA-2653
 
         Keyspace keyspace = Keyspace.open(KEYSPACE1);
-        ColumnFamilyStore cfs = keyspace.getColumnFamilyStore("Standard2");
+        ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(STANDARD2);
 
         // disable compaction while flushing
         cfs.disableAutoCompaction();
@@ -263,7 +317,7 @@ public class CompactionsTest extends SchemaLoader
         {
             DecoratedKey key = Util.dk(String.valueOf(i));
             Mutation rm = new Mutation(KEYSPACE1, key.getKey());
-            rm.add("Standard2", Util.cellname(String.valueOf(i)), ByteBufferUtil.EMPTY_BYTE_BUFFER, i);
+            rm.add(STANDARD2, Util.cellname(String.valueOf(i)), ByteBufferUtil.EMPTY_BYTE_BUFFER, i);
             rm.apply();
 
             if (i % 2 == 0)
@@ -278,7 +332,7 @@ public class CompactionsTest extends SchemaLoader
         {
             DecoratedKey key = Util.dk(String.valueOf(i));
             Mutation rm = new Mutation(KEYSPACE1, key.getKey());
-            rm.add("Standard2", Util.cellname(String.valueOf(i)), ByteBufferUtil.EMPTY_BYTE_BUFFER, i);
+            rm.add(STANDARD2, Util.cellname(String.valueOf(i)), ByteBufferUtil.EMPTY_BYTE_BUFFER, i);
             rm.apply();
         }
         cfs.forceBlockingFlush();
@@ -353,7 +407,7 @@ public class CompactionsTest extends SchemaLoader
     public void testRangeTombstones() throws IOException, ExecutionException, InterruptedException
     {
         Keyspace keyspace = Keyspace.open(KEYSPACE1);
-        ColumnFamilyStore cfs = keyspace.getColumnFamilyStore("Standard2");
+        ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(STANDARD2);
         cfs.clearUnsafe();
 
         // disable compaction while flushing
