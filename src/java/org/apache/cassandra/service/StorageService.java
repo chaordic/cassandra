@@ -164,9 +164,9 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return getPrimaryRangesForEndpoint(keyspace, FBUtilities.getBroadcastAddress());
     }
 
-    public Collection<Range<Token>> getLocalPrimaryRanges(String keyspace)
+    public Collection<Range<Token>> getPrimaryRangesWithinDC(String keyspace)
     {
-        return getLocalPrimaryRangesForEndpoint(keyspace, FBUtilities.getBroadcastAddress());
+        return getPrimaryRangeForEndpointWithinDC(keyspace, FBUtilities.getBroadcastAddress());
     }
 
     private final Set<InetAddress> replicatingNodes = Collections.synchronizedSet(new HashSet<InetAddress>());
@@ -2495,7 +2495,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     {
         Collection<Range<Token>> ranges;
         if (primaryRange && isLocal) {
-            ranges = getLocalPrimaryRanges(keyspace);
+            ranges = getPrimaryRangesWithinDC(keyspace);
         } else if (primaryRange && !isLocal) {
             ranges = getPrimaryRanges(keyspace);
         } else {
@@ -2757,60 +2757,33 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      * @param referenceEndpoint endpoint we are interested in.
      * @return local primary ranges for the specified endpoint.
      */
-    public Collection<Range<Token>> getLocalPrimaryRangesForEndpoint(String keyspace, InetAddress referenceEndpoint)
+    public Collection<Range<Token>> getPrimaryRangeForEndpointWithinDC(String keyspace, InetAddress referenceEndpoint)
     {
         TokenMetadata metadata = tokenMetadata.cloneOnlyTokenMap();
-        String localDC = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddress());
+        String localDC = DatabaseDescriptor.getEndpointSnitch().getDatacenter(referenceEndpoint);
         Collection<InetAddress> localDcNodes = metadata.getTopology().getDatacenterEndpoints().get(localDC);
+        AbstractReplicationStrategy strategy = Keyspace.open(keyspace).getReplicationStrategy();
 
         Collection<Range<Token>> localPrimaryRanges = new HashSet<>();
-        InetAddress firstLocalNode = null;
         List<Token> tokensSinceLastLocalNode = new LinkedList<>();
 
-        for (Token currentToken : metadata.sortedTokens())
+        for (Token token : metadata.sortedTokens())
         {
-                Optional<InetAddress> tokenOwnerOptional = getPrimaryOwnerIfExists(keyspace, currentToken, metadata);
-                if (tokenOwnerOptional.isPresent()) {
-                    InetAddress tokenOwner = tokenOwnerOptional.get();
-                    tokensSinceLastLocalNode.add(currentToken);
-                    if (localDcNodes.contains(tokenOwner))
-                    {
-                        if (firstLocalNode == null)
-                        {
-                            firstLocalNode = tokenOwner; //save this for later
-                        }
-
-                        if (tokenOwner.equals(referenceEndpoint))
-                        {
-                            for (Token previousToken : tokensSinceLastLocalNode)
-                            {
-                                localPrimaryRanges.add(new Range<>(metadata.getPredecessor(previousToken), previousToken));
-                            }
-                        }
-                        tokensSinceLastLocalNode.clear();
-                    }
-                }
-
-            //checking if reference endpoint is also responsible for last tokens of the ring (wrap-around)
-            if (firstLocalNode.equals(referenceEndpoint)) {
-                for (Token previousToken : tokensSinceLastLocalNode)
+            InetAddress[] endpoints = strategy.calculateNaturalEndpoints(token, metadata).toArray(new InetAddress[0]);
+            for (int i = 0; i < endpoints.length; i++)
+            {
+                if (localDcNodes.contains(endpoints[i]))
                 {
-                    localPrimaryRanges.add(new Range<>(metadata.getPredecessor(previousToken), previousToken));
+                    if (endpoints[i].equals(referenceEndpoint))
+                    {
+                        localPrimaryRanges.add(new Range<>(metadata.getPredecessor(token), token));
+                    }
+                    break;
                 }
             }
         }
+
         return localPrimaryRanges;
-    }
-
-
-    protected Optional<InetAddress> getPrimaryOwnerIfExists(String keyspace, Token token, TokenMetadata metadata) {
-        AbstractReplicationStrategy strategy = Keyspace.open(keyspace).getReplicationStrategy();
-        List<InetAddress> endpoints = strategy.calculateNaturalEndpoints(token, metadata);
-        if (endpoints.size() > 0)
-        {
-            return Optional.of(endpoints.get(0));
-        }
-        return Optional.absent();
     }
 
     /**
