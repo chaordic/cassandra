@@ -34,7 +34,7 @@ public class GossipShutdownVerbHandler implements IVerbHandler
             logger.debug("Ignoring shutdown message from {} because gossip is disabled", message.from);
             return;
         }
-        Gossiper.instance.markAsShutdown(message.from);
+        FailureDetector.instance.forceConviction(message.from);
     }
 
 }
