@@ -2256,23 +2256,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                                                       "this query despite the performance unpredictability, use ALLOW FILTERING");
             }
 
-            // We don't internally support exclusive slice bounds on non-composite tables. To deal with it we do an
-            // inclusive slice and remove post-query the value that shouldn't be returned. One problem however is that
-            // if there is a user limit, that limit may make the query return before the end of the slice is reached,
-            // in which case, once we'll have removed bound post-query, we might end up with less results than
-            // requested which would be incorrect. For single-partition query, this is not a problem, we just ask for
-            // one more result (see updateLimitForQuery()) since that's enough to compensate for that problem. For key
-            // range however, each returned row may include one result that will have to be trimmed, so we would have
-            // to bump the query limit by N where N is the number of rows we will return, but we don't know that in
-            // advance. So, since we currently don't have a good way to handle such query, we refuse it (#7059) rather
-            // than answering with something that is wrong.
-            if (stmt.sliceRestriction != null && stmt.isKeyRange && limit != null)
-            {
-                SingleColumnRelation rel = findInclusiveClusteringRelationForCompact(cfDef);
-                throw new InvalidRequestException(String.format("The query requests a restriction of rows with a strict bound (%s) over a range of partitions. "
-                                                              + "This is not supported by the underlying storage engine for COMPACT tables if a LIMIT is provided. "
-                                                              + "Please either make the condition non strict (%s) or remove the user LIMIT", rel, rel.withNonStrictOperator()));
-            }
+
         }
 
         private SingleColumnRelation findInclusiveClusteringRelationForCompact(CFDefinition cfDef)
