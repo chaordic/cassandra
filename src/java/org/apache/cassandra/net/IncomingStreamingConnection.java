@@ -17,12 +17,10 @@
  */
 package org.apache.cassandra.net;
 
-import java.io.Closeable;
 import java.io.DataInput;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.Socket;
-import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,20 +32,18 @@ import org.apache.cassandra.streaming.messages.StreamMessage;
 /**
  * Thread to consume stream init messages.
  */
-public class IncomingStreamingConnection extends Thread implements Closeable
+public class IncomingStreamingConnection extends Thread
 {
     private static final Logger logger = LoggerFactory.getLogger(IncomingStreamingConnection.class);
 
     private final int version;
     private final Socket socket;
-    private final Set<Closeable> group;
 
-    public IncomingStreamingConnection(int version, Socket socket, Set<Closeable> group)
+    public IncomingStreamingConnection(int version, Socket socket)
     {
         super("STREAM-INIT-" + socket.getRemoteSocketAddress());
         this.version = version;
         this.socket = socket;
-        this.group = group;
     }
 
     @Override
@@ -71,27 +67,14 @@ public class IncomingStreamingConnection extends Thread implements Closeable
         catch (IOException e)
         {
             logger.debug("IOException reading from socket; closing", e);
-            close();
-        }
-    }
-    
-    @Override
-    public void close()
-    {
-        try
-        {
-            if (!socket.isClosed())
+            try
             {
                 socket.close();
             }
-        }
-        catch (IOException e)
-        {
-            logger.debug("Error closing socket", e);
-        }
-        finally
-        {
-            group.remove(this);
+            catch (IOException e2)
+            {
+                logger.debug("error closing socket", e2);
+            }
         }
     }
 }
